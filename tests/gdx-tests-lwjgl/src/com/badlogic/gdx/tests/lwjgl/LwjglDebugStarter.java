@@ -18,13 +18,10 @@ package com.badlogic.gdx.tests.lwjgl;
 
 import com.badlogic.gdx.backends.lwjgl.LwjglApplication;
 import com.badlogic.gdx.backends.lwjgl.LwjglApplicationConfiguration;
-import com.badlogic.gdx.graphics.OrthographicCamera;
-import com.badlogic.gdx.math.Vector2;
-import com.badlogic.gdx.scenes.scene2d.Stage;
-import com.badlogic.gdx.tests.g3d.Basic3DSceneTest;
-import com.badlogic.gdx.tests.g3d.Basic3DTest;
-import com.badlogic.gdx.tests.g3d.ModelLoaderTest;
-import com.badlogic.gdx.tests.g3d.ModelTest;
+import com.badlogic.gdx.tests.*;
+import com.badlogic.gdx.tests.extensions.ControllersTest;
+import com.badlogic.gdx.tests.extensions.FreeTypeMetricsTest;
+import com.badlogic.gdx.tests.superkoalio.SuperKoalio;
 import com.badlogic.gdx.tests.utils.GdxTest;
 
 public class LwjglDebugStarter {
@@ -36,11 +33,14 @@ public class LwjglDebugStarter {
 //		new SharedLibraryLoader("../../extensions/gdx-controllers/gdx-controllers-desktop/libs/gdx-controllers-desktop-natives.jar").load("gdx-controllers-desktop");
 //		new SharedLibraryLoader("../../gdx/libs/gdx-natives.jar").load("gdx");
 
-		GdxTest test = new Basic3DTest();
+		GdxTest test = new LabelTest();
 		LwjglApplicationConfiguration config = new LwjglApplicationConfiguration();
-		config.useGL20 = test.needsGL20();
-		config.width = 480;
-		config.height = 320;
+		config.r = config.g = config.b = config.a = 8;
+//		config.width = 320;
+//		config.height = 241;
+		config.width = 960;
+		config.height = 600;		
+//		config.setFromDisplayMode(LwjglApplicationConfiguration.getDesktopDisplayMode());
 		new LwjglApplication(test, config);
 	}
 }

@@ -23,31 +23,31 @@ import android.media.MediaPlayer;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.audio.Music;
 
-public class AndroidMusic implements Music {
+public class AndroidMusic implements Music, MediaPlayer.OnCompletionListener {
 	private final AndroidAudio audio;
 	private MediaPlayer player;
 	private boolean isPrepared = true;
 	protected boolean wasPlaying = false;
 	private float volume = 1f;
-	private AndroidOnCompletionListener onCompletionListener;
+	protected OnCompletionListener onCompletionListener;
 
 	AndroidMusic (AndroidAudio audio, MediaPlayer player) {
 		this.audio = audio;
 		this.player = player;
-		onCompletionListener = new AndroidOnCompletionListener(this);
-		this.player.setOnCompletionListener(onCompletionListener);
+		this.onCompletionListener = null;
+		this.player.setOnCompletionListener(this);
 	}
 
 	@Override
 	public void dispose () {
 		if (player == null) return;
 		try {
-			if (player.isPlaying()) player.stop();
 			player.release();
 		} catch (Throwable t) {
 			Gdx.app.log("AndroidMusic", "error while disposing AndroidMusic instance, non-fatal");
 		} finally {
 			player = null;
+			onCompletionListener = null;
 			synchronized (audio.musics) {
 				audio.musics.remove(this);
 			}
@@ -56,22 +56,52 @@ public class AndroidMusic implements Music {
 
 	@Override
 	public boolean isLooping () {
-		return player.isLooping();
+		if (player == null) return false;
+		try {
+			return player.isLooping();
+		} catch (Exception e) {
+			// NOTE: isLooping() can potentially throw an exception and crash the application
+			e.printStackTrace();
+			return false;
+		}
 	}
 
 	@Override
 	public boolean isPlaying () {
-		return player.isPlaying();
+		if (player == null) return false;
+		try {
+			return player.isPlaying();
+		} catch (Exception e) {
+			// NOTE: isPlaying() can potentially throw an exception and crash the application
+			e.printStackTrace();
+			return false;
+		}
 	}
 
 	@Override
-	public void pause () {
-		if (player.isPlaying()) player.pause();
+	public void pause () { 
+		if (player == null) return;
+		try {
+			if (player.isPlaying()) {			
+				player.pause();
+			}
+		} catch (Exception e) {
+			// NOTE: isPlaying() can potentially throw an exception and crash the application
+			e.printStackTrace();
+		}
+		wasPlaying = false;
 	}
 
 	@Override
 	public void play () {
-		if (player.isPlaying()) return;
+		if (player == null) return;
+		try {
+			if (player.isPlaying()) return;
+		} catch (Exception e) {
+			// NOTE: isPlaying() can potentially throw an exception and crash the application
+			e.printStackTrace();
+			return;
+		}
 
 		try {
 			if (!isPrepared) {
@@ -88,22 +118,25 @@ public class AndroidMusic implements Music {
 
 	@Override
 	public void setLooping (boolean isLooping) {
+		if (player == null) return;
 		player.setLooping(isLooping);
 	}
 
 	@Override
 	public void setVolume (float volume) {
+		if (player == null) return;
 		player.setVolume(volume, volume);
 		this.volume = volume;
 	}
-	
+
 	@Override
 	public float getVolume () {
 		return volume;
 	}
-	
+
 	@Override
 	public void setPan (float pan, float volume) {
+		if (player == null) return;
 		float leftVolume = volume;
 		float rightVolume = volume;
 
@@ -119,6 +152,7 @@ public class AndroidMusic implements Music {
 
 	@Override
 	public void stop () {
+		if (player == null) return;
 		if (isPrepared) {
 			player.seekTo(0);
 		}
@@ -126,30 +160,46 @@ public class AndroidMusic implements Music {
 		isPrepared = false;
 	}
 
+	public void setPosition (float position) {
+		if (player == null) return;
+		try {
+			if (!isPrepared) {
+				player.prepare();
+				isPrepared = true;
+			}
+			player.seekTo((int)(position * 1000));
+		} catch (IllegalStateException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
 	@Override
 	public float getPosition () {
+		if (player == null) return 0.0f;
 		return player.getCurrentPosition() / 1000f;
 	}
-	
-	@Override
-	public void setOnCompletionListener(OnCompletionListener listener) {
-		onCompletionListener.listener = listener;
-	}
-	
-	private class AndroidOnCompletionListener implements MediaPlayer.OnCompletionListener {
-		
-		public OnCompletionListener listener;
-		private AndroidMusic music;
-		
-		public AndroidOnCompletionListener (AndroidMusic music) {
-			this.music = music;
-			listener = null;
-		}
 
-		@Override
-		public void onCompletion (MediaPlayer mp) {
-			if (listener != null)
-				listener.onCompletion(music);
+	public float getDuration () {
+		if (player == null) return 0.0f;
+		return player.getDuration() / 1000f;
+	}
+
+	@Override
+	public void setOnCompletionListener (OnCompletionListener listener) {
+		onCompletionListener = listener;
+	}
+
+	@Override
+	public void onCompletion (MediaPlayer mp) {
+		if (onCompletionListener != null) {
+			Gdx.app.postRunnable(new Runnable() {
+				@Override
+				public void run () {
+					onCompletionListener.onCompletion(AndroidMusic.this);
+				}
+			});
 		}
 	};
 }

@@ -1,6 +1,21 @@
+/*******************************************************************************
+ * Copyright 2011 See AUTHORS file.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
 package com.badlogic.gdx.tests.g3d;
 
-import com.badlogic.gdx.Application;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.assets.AssetManager;
 import com.badlogic.gdx.graphics.GL20;
@@ -11,7 +26,6 @@ import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.ModelInstance;
 import com.badlogic.gdx.tests.utils.GdxTest;
-import com.badlogic.gdx.utils.Logger;
 
 public class ModelLoaderTest extends GdxTest {
 	AssetManager assets;
@@ -31,19 +45,15 @@ public class ModelLoaderTest extends GdxTest {
 		assets.load("data/g3d/cube.g3dj", Model.class);
 		spriteBatch = new SpriteBatch();
 		modelBatch = new ModelBatch();
-//		assets.getLogger().setLevel(Logger.DEBUG);
+// assets.getLogger().setLevel(Logger.DEBUG);
 	}
 
-	@Override
-	public boolean needsGL20 () {
-		return true;
-	}
-
-	private void doneLoading() {
+	private void doneLoading () {
 		instance = new ModelInstance(assets.get("data/g3d/cube.g3dj", Model.class));
 	}
-	
+
 	float counter;
+
 	@Override
 	public void render () {
 		if ((instance != null) && ((counter += Gdx.graphics.getDeltaTime()) >= 1f)) {
@@ -53,16 +63,16 @@ public class ModelLoaderTest extends GdxTest {
 			assets.load("data/g3d/cube.g3dj", Model.class);
 			assets.finishLoading();
 		}
-		
+
 		Gdx.gl.glClearColor(0.2f, 0.2f, 0.2f, 1);
 		Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
 		Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
-		
-		if(assets.update()) {
+
+		if (assets.update()) {
 			doneLoading();
 		}
-		
-		if(instance != null) {
+
+		if (instance != null) {
 			modelBatch.begin(camera);
 			modelBatch.render(instance);
 			modelBatch.end();

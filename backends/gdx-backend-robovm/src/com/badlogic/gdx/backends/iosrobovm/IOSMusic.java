@@ -1,84 +1,121 @@
+/*******************************************************************************
+ * Copyright 2013 See AUTHORS file.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
 package com.badlogic.gdx.backends.iosrobovm;
 
-import com.badlogic.gdx.audio.Music;
+import org.robovm.apple.foundation.NSObject;
 
-/** A music player, suitable for background music. Supports MP3 and WAV files which are played via hardware on iOS.
- * <p>
- * Limitations: does not play OGG.
- * 
- * @author noblemaster */
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.audio.Music;
+import com.badlogic.gdx.backends.iosrobovm.objectal.AVAudioPlayerDelegateAdapter;
+import com.badlogic.gdx.backends.iosrobovm.objectal.OALAudioTrack;
+
+/** @author Niklas Therning */
 public class IOSMusic implements Music {
+	private final OALAudioTrack track;
+	OnCompletionListener onCompletionListener;
+
+	public IOSMusic (OALAudioTrack track) {
+		this.track = track;
+		this.track.setDelegate(new AVAudioPlayerDelegateAdapter() {
+			@Override
+			public void didFinishPlaying (NSObject player, boolean success) {
+				final OnCompletionListener listener = onCompletionListener;
+				if (listener != null) {
+					Gdx.app.postRunnable(new Runnable() {
+						@Override
+						public void run () {
+							listener.onCompletion(IOSMusic.this);
+						}
+					});
+				}
+			}
+		});
+	}
 
 	@Override
 	public void play () {
-		// TODO Auto-generated method stub
-		
+		if (track.isPaused()) {
+			track.setPaused(false);
+		} else if (!track.isPlaying()) {
+			track.play();
+		}
 	}
 
 	@Override
 	public void pause () {
-		// TODO Auto-generated method stub
-		
+		if (track.isPlaying()) {
+			track.setPaused(true);
+		}
 	}
 
 	@Override
 	public void stop () {
-		// TODO Auto-generated method stub
-		
+		track.stop();
 	}
 
 	@Override
 	public boolean isPlaying () {
-		// TODO Auto-generated method stub
-		return false;
+		return track.isPlaying() && !track.isPaused();
 	}
 
 	@Override
 	public void setLooping (boolean isLooping) {
-		// TODO Auto-generated method stub
-		
+		track.setNumberOfLoops(isLooping ? -1 : 0);
 	}
 
 	@Override
 	public boolean isLooping () {
-		// TODO Auto-generated method stub
-		return false;
+		return track.getNumberOfLoops() == -1;
 	}
 
 	@Override
 	public void setVolume (float volume) {
-		// TODO Auto-generated method stub
-		
+		track.setVolume(volume);
+	}
+
+	@Override
+	public void setPosition (float position) {
+		track.setCurrentTime(position);
 	}
 
 	@Override
 	public float getPosition () {
-		// TODO Auto-generated method stub
-		return 0;
+		return (float)(track.getCurrentTime());
 	}
 
 	@Override
 	public void dispose () {
-		// TODO Auto-generated method stub
-		
+		track.clear();
 	}
 
 	@Override
-	public float getVolume() {
-		// TODO Auto-generated method stub
-		return 0;
+	public float getVolume () {
+		return track.getVolume();
 	}
 
 	@Override
-	public void setPan(float pan, float volume) {
-		// TODO Auto-generated method stub
-		
+	public void setPan (float pan, float volume) {
+		track.setPan(pan);
+		track.setVolume(volume);
 	}
 
 	@Override
 	public void setOnCompletionListener (OnCompletionListener listener) {
-		// TODO Auto-generated method stub
-		
+		this.onCompletionListener = listener;
 	}
 
 }

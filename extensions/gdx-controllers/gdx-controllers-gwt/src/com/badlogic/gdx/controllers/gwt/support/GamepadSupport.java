@@ -1,3 +1,19 @@
+/*******************************************************************************
+ * Copyright 2011 See AUTHORS file.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
 package com.badlogic.gdx.controllers.gwt.support;
 
 import com.badlogic.gdx.utils.IntMap;
@@ -99,18 +115,18 @@ public class GamepadSupport {
 	}
 	
 	private static native void nativeInit() /*-{
-        var gamepadSupportAvailable = !! navigator.getGamepads || !! navigator.webkitGetGamepads || !! navigator.webkitGamepads || (navigator.userAgent.indexOf('Firefox/') != -1);
+        var gamepadSupportAvailable = !! navigator.getGamepads;
         if (gamepadSupportAvailable) {
-            $wnd.addEventListener('MozGamepadConnected', @com.badlogic.gdx.controllers.gwt.support.GamepadSupport::handleGamepadConnect(Lcom/badlogic/gdx/controllers/gwt/support/GamepadSupport$GamepadEvent;), false);
-            $wnd.addEventListener('MozGamepadDisconnected', @com.badlogic.gdx.controllers.gwt.support.GamepadSupport::handleGamepadDisconnect(Lcom/badlogic/gdx/controllers/gwt/support/GamepadSupport$GamepadEvent;), false);
-            if ( !! navigator.getGamepads || !! navigator.webkitGamepads || !! navigator.webkitGetGamepads) {
+            $wnd.addEventListener('gamepadconnected', @com.badlogic.gdx.controllers.gwt.support.GamepadSupport::handleGamepadConnect(Lcom/badlogic/gdx/controllers/gwt/support/GamepadSupport$GamepadEvent;), false);
+            $wnd.addEventListener('gamepaddisconnected', @com.badlogic.gdx.controllers.gwt.support.GamepadSupport::handleGamepadDisconnect(Lcom/badlogic/gdx/controllers/gwt/support/GamepadSupport$GamepadEvent;), false);
+            if ( !! navigator.getGamepads) {
                 @com.badlogic.gdx.controllers.gwt.support.GamepadSupport::startPolling()();
             }
         }
 	}-*/;
 	
 	private static native JsArray<Gamepad> nativePollGamepads() /*-{
-		return rawGamepads = (navigator.webkitGetGamepads && navigator.webkitGetGamepads()) || navigator.webkitGamepads;
+		return navigator.getGamepads();
 	}-*/;
 	
 	public static native void consoleLog(String message) /*-{

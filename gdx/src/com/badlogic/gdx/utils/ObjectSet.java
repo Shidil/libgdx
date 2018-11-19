@@ -16,17 +16,20 @@
 
 package com.badlogic.gdx.utils;
 
-import com.badlogic.gdx.math.MathUtils;
-
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+
+import com.badlogic.gdx.math.MathUtils;
 
 /** An unordered set where the keys are objects. This implementation uses cuckoo hashing using 3 hashes, random walking, and a
  * small stash for problematic keys. Null keys are not allowed. No allocation is done except when growing the table size. <br>
  * <br>
  * This set performs very fast contains and remove (typically O(1), worst case O(log(n))). Add may be a bit slower, depending on
  * hash collisions. Load factors greater than 0.91 greatly increase the chances the set will have to rehash to the next higher POT
- * size.
+ * size.<br>
+ * <br>
+ * Iteration can be very slow for a set with a large capacity. {@link #clear(int)} and {@link #shrink(int)} can be used to reduce
+ * the capacity. {@link OrderedSet} provides much faster iteration.
  * @author Nathan Sweet */
 public class ObjectSet<T> implements Iterable<T> {
 	private static final int PRIME1 = 0xbe1f14b1;
@@ -43,26 +46,27 @@ public class ObjectSet<T> implements Iterable<T> {
 	private int stashCapacity;
 	private int pushIterations;
 
-	private SetIterator iterator1, iterator2;
+	private ObjectSetIterator iterator1, iterator2;
 
-	/** Creates a new set with an initial capacity of 32 and a load factor of 0.8. This set will hold 25 items before growing the
-	 * backing table. */
+	/** Creates a new set with an initial capacity of 51 and a load factor of 0.8. */
 	public ObjectSet () {
-		this(32, 0.8f);
+		this(51, 0.8f);
 	}
 
-	/** Creates a new set with a load factor of 0.8. This set will hold initialCapacity * 0.8 items before growing the backing
-	 * table. */
+	/** Creates a new set with a load factor of 0.8.
+	 * @param initialCapacity If not a power of two, it is increased to the next nearest power of two. */
 	public ObjectSet (int initialCapacity) {
 		this(initialCapacity, 0.8f);
 	}
 
-	/** Creates a new set with the specified initial capacity and load factor. This set will hold initialCapacity * loadFactor items
-	 * before growing the backing table. */
+	/** Creates a new set with the specified initial capacity and load factor. This set will hold initialCapacity items before
+	 * growing the backing table.
+	 * @param initialCapacity If not a power of two, it is increased to the next nearest power of two. */
 	public ObjectSet (int initialCapacity, float loadFactor) {
 		if (initialCapacity < 0) throw new IllegalArgumentException("initialCapacity must be >= 0: " + initialCapacity);
-		if (capacity > 1 << 30) throw new IllegalArgumentException("initialCapacity is too large: " + initialCapacity);
-		capacity = MathUtils.nextPowerOfTwo(initialCapacity);
+		initialCapacity = MathUtils.nextPowerOfTwo((int)Math.ceil(initialCapacity / loadFactor));
+		if (initialCapacity > 1 << 30) throw new IllegalArgumentException("initialCapacity is too large: " + initialCapacity);
+		capacity = initialCapacity;
 
 		if (loadFactor <= 0) throw new IllegalArgumentException("loadFactor must be > 0: " + loadFactor);
 		this.loadFactor = loadFactor;
@@ -76,7 +80,16 @@ public class ObjectSet<T> implements Iterable<T> {
 		keyTable = (T[])new Object[capacity + stashCapacity];
 	}
 
-	/** Returns true if the key was not already in the set. */
+	/** Creates a new set identical to the specified set. */
+	public ObjectSet (ObjectSet set) {
+		this((int)Math.floor(set.capacity * set.loadFactor), set.loadFactor);
+		stashSize = set.stashSize;
+		System.arraycopy(set.keyTable, 0, keyTable, 0, set.keyTable.length);
+		size = set.size;
+	}
+
+	/** Returns true if the key was not already in the set. If this set already contains the key, the call leaves the set unchanged
+	 * and returns false. */
 	public boolean add (T key) {
 		if (key == null) throw new IllegalArgumentException("key cannot be null.");
 		T[] keyTable = this.keyTable;
@@ -122,10 +135,24 @@ public class ObjectSet<T> implements Iterable<T> {
 		return true;
 	}
 
-	public void addAll (Array<T> array) {
-		ensureCapacity(array.size);
-		for (int i = 0, n = array.size; i < n; i++)
-			add(array.get(i));
+	public void addAll (Array<? extends T> array) {
+		addAll(array.items, 0, array.size);
+	}
+
+	public void addAll (Array<? extends T> array, int offset, int length) {
+		if (offset + length > array.size)
+			throw new IllegalArgumentException("offset + length must be <= size: " + offset + " + " + length + " <= " + array.size);
+		addAll((T[])array.items, offset, length);
+	}
+
+	public void addAll (T... array) {
+		addAll(array, 0, array.length);
+	}
+
+	public void addAll (T[] array, int offset, int length) {
+		ensureCapacity(length);
+		for (int i = offset, n = i + length; i < n; i++)
+			add(array[i]);
 	}
 
 	public void addAll (ObjectSet<T> set) {
@@ -227,7 +254,7 @@ public class ObjectSet<T> implements Iterable<T> {
 		if (stashSize == stashCapacity) {
 			// Too many pushes occurred and the stash is full, increase the table size.
 			resize(capacity << 1);
-			add(key);
+			addResize(key);
 			return;
 		}
 		// Store key in the stash.
@@ -280,10 +307,42 @@ public class ObjectSet<T> implements Iterable<T> {
 		// If the removed location was not last, move the last tuple to the removed location.
 		stashSize--;
 		int lastIndex = capacity + stashSize;
-		if (index < lastIndex) keyTable[index] = keyTable[lastIndex];
+		if (index < lastIndex) {
+			keyTable[index] = keyTable[lastIndex];
+			keyTable[lastIndex] = null;
+		}
 	}
 
+	/** Returns true if the set is empty. */
+	public boolean isEmpty () {
+		return size == 0;
+	}
+
+	/** Reduces the size of the backing arrays to be the specified capacity or less. If the capacity is already less, nothing is
+	 * done. If the set contains more items than the specified capacity, the next highest power of two capacity is used instead. */
+	public void shrink (int maximumCapacity) {
+		if (maximumCapacity < 0) throw new IllegalArgumentException("maximumCapacity must be >= 0: " + maximumCapacity);
+		if (size > maximumCapacity) maximumCapacity = size;
+		if (capacity <= maximumCapacity) return;
+		maximumCapacity = MathUtils.nextPowerOfTwo(maximumCapacity);
+		resize(maximumCapacity);
+	}
+
+	/** Clears the set and reduces the size of the backing arrays to be the specified capacity, if they are larger. The reduction
+	 * is done by allocating new arrays, though for large arrays this can be faster than clearing the existing array. */
+	public void clear (int maximumCapacity) {
+		if (capacity <= maximumCapacity) {
+			clear();
+			return;
+		}
+		size = 0;
+		resize(maximumCapacity);
+	}
+
+	/** Clears the set, leaving the backing arrays at the current capacity. When the capacity is high and the population is low,
+	 * iteration can be unnecessarily slow. {@link #clear(int)} can be used to reduce the capacity. */
 	public void clear () {
+		if (size == 0) return;
 		T[] keyTable = this.keyTable;
 		for (int i = capacity + stashSize; i-- > 0;)
 			keyTable[i] = null;
@@ -298,24 +357,49 @@ public class ObjectSet<T> implements Iterable<T> {
 			index = hash2(hashCode);
 			if (!key.equals(keyTable[index])) {
 				index = hash3(hashCode);
-				if (!key.equals(keyTable[index])) return containsKeyStash(key);
+				if (!key.equals(keyTable[index])) return getKeyStash(key) != null;
 			}
 		}
 		return true;
 	}
 
-	private boolean containsKeyStash (T key) {
-		T[] keyTable = this.keyTable;
-		for (int i = capacity, n = i + stashSize; i < n; i++)
-			if (key.equals(keyTable[i])) return true;
-		return false;
+	/** @return May be null. */
+	public T get (T key) {
+		int hashCode = key.hashCode();
+		int index = hashCode & mask;
+		T found = keyTable[index];
+		if (!key.equals(found)) {
+			index = hash2(hashCode);
+			found = keyTable[index];
+			if (!key.equals(found)) {
+				index = hash3(hashCode);
+				found = keyTable[index];
+				if (!key.equals(found)) return getKeyStash(key);
+			}
+		}
+		return found;
 	}
 
-	/** Increases the size of the backing array to acommodate the specified number of additional items. Useful before adding many
+	private T getKeyStash (T key) {
+		T[] keyTable = this.keyTable;
+		for (int i = capacity, n = i + stashSize; i < n; i++)
+			if (key.equals(keyTable[i])) return keyTable[i];
+		return null;
+	}
+
+	public T first () {
+		T[] keyTable = this.keyTable;
+		for (int i = 0, n = capacity + stashSize; i < n; i++)
+			if (keyTable[i] != null) return keyTable[i];
+		throw new IllegalStateException("ObjectSet is empty.");
+	}
+
+	/** Increases the size of the backing array to accommodate the specified number of additional items. Useful before adding many
 	 * items to avoid multiple backing array resizes. */
 	public void ensureCapacity (int additionalCapacity) {
+		if (additionalCapacity < 0) throw new IllegalArgumentException("additionalCapacity must be >= 0: " + additionalCapacity);
 		int sizeNeeded = size + additionalCapacity;
-		if (sizeNeeded >= threshold) resize(MathUtils.nextPowerOfTwo((int)(sizeNeeded / loadFactor)));
+		if (sizeNeeded >= threshold) resize(MathUtils.nextPowerOfTwo((int)Math.ceil(sizeNeeded / loadFactor)));
 	}
 
 	private void resize (int newSize) {
@@ -332,11 +416,14 @@ public class ObjectSet<T> implements Iterable<T> {
 
 		keyTable = (T[])new Object[newSize + stashCapacity];
 
+		int oldSize = size;
 		size = 0;
 		stashSize = 0;
-		for (int i = 0; i < oldEndIndex; i++) {
-			T key = oldKeyTable[i];
-			if (key != null) addResize(key);
+		if (oldSize > 0) {
+			for (int i = 0; i < oldEndIndex; i++) {
+				T key = oldKeyTable[i];
+				if (key != null) addResize(key);
+			}
 		}
 	}
 
@@ -350,10 +437,30 @@ public class ObjectSet<T> implements Iterable<T> {
 		return (h ^ h >>> hashShift) & mask;
 	}
 
+	public int hashCode () {
+		int h = 0;
+		for (int i = 0, n = capacity + stashSize; i < n; i++)
+			if (keyTable[i] != null) h += keyTable[i].hashCode();
+		return h;
+	}
+
+	public boolean equals (Object obj) {
+		if (!(obj instanceof ObjectSet)) return false;
+		ObjectSet other = (ObjectSet)obj;
+		if (other.size != size) return false;
+		T[] keyTable = this.keyTable; 
+		for (int i = 0, n = capacity + stashSize; i < n; i++)
+			if (keyTable[i] != null && !other.contains(keyTable[i])) return false;
+		return true;
+	}
+
 	public String toString () {
-		if (size == 0) return "{}";
+		return '{' + toString(", ") + '}';
+	}
+
+	public String toString (String separator) {
+		if (size == 0) return "";
 		StringBuilder buffer = new StringBuilder(32);
-		buffer.append('{');
 		T[] keyTable = this.keyTable;
 		int i = keyTable.length;
 		while (i-- > 0) {
@@ -365,19 +472,18 @@ public class ObjectSet<T> implements Iterable<T> {
 		while (i-- > 0) {
 			T key = keyTable[i];
 			if (key == null) continue;
-			buffer.append(", ");
+			buffer.append(separator);
 			buffer.append(key);
 		}
-		buffer.append('}');
 		return buffer.toString();
 	}
 
-	/** Returns an iterator for the keys in the set. Remove is supported. Note that the same iterator instance is returned each time
-	 * this method is called. Use the {@link SetIterator} constructor for nested or multithreaded iteration. */
-	public SetIterator<T> iterator () {
+	/** Returns an iterator for the keys in the set. Remove is supported. Note that the same iterator instance is returned each
+	 * time this method is called. Use the {@link ObjectSetIterator} constructor for nested or multithreaded iteration. */
+	public ObjectSetIterator<T> iterator () {
 		if (iterator1 == null) {
-			iterator1 = new SetIterator(this);
-			iterator2 = new SetIterator(this);
+			iterator1 = new ObjectSetIterator(this);
+			iterator2 = new ObjectSetIterator(this);
 		}
 		if (!iterator1.valid) {
 			iterator1.reset();
@@ -391,14 +497,20 @@ public class ObjectSet<T> implements Iterable<T> {
 		return iterator2;
 	}
 
-	static public class SetIterator<K> implements Iterable<K>, Iterator<K> {
+	static public <T> ObjectSet<T> with (T... array) {
+		ObjectSet set = new ObjectSet();
+		set.addAll(array);
+		return set;
+	}
+
+	static public class ObjectSetIterator<K> implements Iterable<K>, Iterator<K> {
 		public boolean hasNext;
 
 		final ObjectSet<K> set;
 		int nextIndex, currentIndex;
 		boolean valid = true;
 
-		public SetIterator (ObjectSet<K> set) {
+		public ObjectSetIterator (ObjectSet<K> set) {
 			this.set = set;
 			reset();
 		}
@@ -409,7 +521,7 @@ public class ObjectSet<T> implements Iterable<T> {
 			findNextIndex();
 		}
 
-		void findNextIndex () {
+		private void findNextIndex () {
 			hasNext = false;
 			K[] keyTable = set.keyTable;
 			for (int n = set.capacity + set.stashSize; ++nextIndex < n;) {
@@ -424,6 +536,8 @@ public class ObjectSet<T> implements Iterable<T> {
 			if (currentIndex < 0) throw new IllegalStateException("next must be called before remove.");
 			if (currentIndex >= set.capacity) {
 				set.removeStashIndex(currentIndex);
+				nextIndex = currentIndex - 1;
+				findNextIndex();
 			} else {
 				set.keyTable[currentIndex] = null;
 			}
@@ -432,6 +546,7 @@ public class ObjectSet<T> implements Iterable<T> {
 		}
 
 		public boolean hasNext () {
+			if (!valid) throw new GdxRuntimeException("#iterator() cannot be used nested.");
 			return hasNext;
 		}
 
@@ -444,16 +559,20 @@ public class ObjectSet<T> implements Iterable<T> {
 			return key;
 		}
 
-		public Iterator<K> iterator () {
+		public ObjectSetIterator<K> iterator () {
 			return this;
 		}
 
-		/** Returns a new array containing the remaining keys. */
-		public Array<K> toArray () {
-			Array array = new Array(true, set.size);
+		/** Adds the remaining values to the array. */
+		public Array<K> toArray (Array<K> array) {
 			while (hasNext)
 				array.add(next());
 			return array;
+		}
+
+		/** Returns a new array containing the remaining values. */
+		public Array<K> toArray () {
+			return toArray(new Array(true, set.size));
 		}
 	}
 }

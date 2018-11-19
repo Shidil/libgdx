@@ -18,6 +18,7 @@ package com.badlogic.gdx.backends.gwt;
 
 import com.badlogic.gdx.Application;
 import com.badlogic.gdx.ApplicationListener;
+import com.badlogic.gdx.ApplicationLogger;
 import com.badlogic.gdx.Audio;
 import com.badlogic.gdx.Files;
 import com.badlogic.gdx.Gdx;
@@ -34,16 +35,16 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Clipboard;
 import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.TimeUtils;
+import com.google.gwt.animation.client.AnimationScheduler;
+import com.google.gwt.animation.client.AnimationScheduler.AnimationCallback;
 import com.google.gwt.core.client.EntryPoint;
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.JavaScriptObject;
+import com.google.gwt.dom.client.CanvasElement;
 import com.google.gwt.dom.client.Document;
 import com.google.gwt.dom.client.Element;
 import com.google.gwt.dom.client.Style;
 import com.google.gwt.dom.client.Style.Unit;
-import com.google.gwt.user.client.Timer;
-import com.google.gwt.user.client.ui.FlowPanel;
-import com.google.gwt.user.client.ui.HTMLPanel;
 import com.google.gwt.user.client.ui.HasHorizontalAlignment;
 import com.google.gwt.user.client.ui.HasVerticalAlignment;
 import com.google.gwt.user.client.ui.Image;
@@ -54,37 +55,56 @@ import com.google.gwt.user.client.ui.RootPanel;
 import com.google.gwt.user.client.ui.SimplePanel;
 import com.google.gwt.user.client.ui.TextArea;
 import com.google.gwt.user.client.ui.VerticalPanel;
+import com.google.gwt.user.client.ui.Widget;
 
 /** Implementation of an {@link Application} based on GWT. Clients have to override {@link #getConfig()} and
- * {@link #getApplicationListener()}. Clients can override the default loading screen via
+ * {@link #createApplicationListener()}. Clients can override the default loading screen via
  * {@link #getPreloaderCallback()} and implement any loading screen drawing via GWT widgets.
  * @author mzechner */
 public abstract class GwtApplication implements EntryPoint, Application {
 	private ApplicationListener listener;
-	private GwtApplicationConfiguration config;
-	private GwtGraphics graphics;
+	GwtApplicationConfiguration config;
+	GwtGraphics graphics;
 	private GwtInput input;
 	private GwtNet net;
 	private Panel root = null;
-	private TextArea log = null;
+	protected TextArea log = null;
 	private int logLevel = LOG_ERROR;
+	private ApplicationLogger applicationLogger;
 	private Array<Runnable> runnables = new Array<Runnable>();
 	private Array<Runnable> runnablesHelper = new Array<Runnable>();
 	private Array<LifecycleListener> lifecycleListeners = new Array<LifecycleListener>();
-	private int lastWidth, lastHeight;
-	private Preloader preloader;
+	private int lastWidth;
+	private int lastHeight;
+	Preloader preloader;
 	private static AgentInfo agentInfo;
 	private ObjectMap<String, Preferences> prefs = new ObjectMap<String, Preferences>();
+	private Clipboard clipboard;
+	LoadingListener loadingListener;
 
 	/** @return the configuration for the {@link GwtApplication}. */
 	public abstract GwtApplicationConfiguration getConfig ();
 
+	
+	public String getPreloaderBaseURL()
+	{
+		return GWT.getHostPageBaseURL() + "assets/";
+	}
+	
+	@Override
+	public ApplicationListener getApplicationListener() {
+		return listener;
+	}
+	
+	public abstract ApplicationListener createApplicationListener();
+	
 	@Override
 	public void onModuleLoad () {
-		this.agentInfo = computeAgentInfo();
-		this.listener = getApplicationListener();
+		GwtApplication.agentInfo = computeAgentInfo();
+		this.listener = createApplicationListener();
 		this.config = getConfig();
-		this.log = config.log;
+		setApplicationLogger(new GwtApplicationLogger(this.config.log));
+
 
 		if (config.rootPanel != null) {
 			this.root = config.rootPanel;
@@ -111,60 +131,89 @@ public abstract class GwtApplication implements EntryPoint, Application {
 			}
 		}
 
-		// initialize SoundManager2
-		SoundManager.init(GWT.getModuleBaseURL(), 9, true);
+		
+		if (config.disableAudio) {
+			preloadAssets();
+		} else {
+			// initialize SoundManager2
+			SoundManager.init(GWT.getModuleBaseURL(), 9, config.preferFlash, new SoundManager.SoundManagerCallback() {
 
-		// wait for soundmanager to load, this is fugly, but for
-		// some reason the ontimeout and onerror callbacks are never
-		// called (function instanceof Function fails, wtf JS?).
-		new Timer() {
+				@Override
+				public void onready () {
+					preloadAssets();
+				}
+
+				@Override
+				public void ontimeout (String status, String errorType) {
+					error("SoundManager", status + " " + errorType);
+				}
+
+			});
+		}
+	}
+	
+	void preloadAssets () {
+		final PreloaderCallback callback = getPreloaderCallback();
+		preloader = createPreloader();
+		preloader.preload("assets.txt", new PreloaderCallback() {
 			@Override
-			public void run () {
-				if (SoundManager.ok()) {
-					final PreloaderCallback callback = getPreloaderCallback();
-					preloader = new Preloader();
-					preloader.preload("assets.txt", new PreloaderCallback() {
-						@Override
-						public void error (String file) {
-							callback.error(file);
-						}
+			public void error (String file) {
+				callback.error(file);
+			}
 
-						@Override
-						public void update (PreloaderState state) {
-							callback.update(state);
-							if (state.hasEnded()) {
-								root.clear();
-								setupLoop();
-							}
-						}
-					});
-					cancel();
+			@Override
+			public void update (PreloaderState state) {
+				callback.update(state);
+				if (state.hasEnded()) {
+					getRootPanel().clear();
+					if(loadingListener != null)
+						loadingListener.beforeSetup();
+					setupLoop();
+					addEventListeners();
+					if(loadingListener != null)
+						loadingListener.afterSetup();
 				}
 			}
-		}.scheduleRepeating(100);
+		});
 	}
 
-	private void setupLoop () {
+	/**
+	 * Override this method to return a custom widget informing the that their browser lacks support of WebGL.
+	 *
+	 * @return Widget to display when WebGL is not supported.
+	 */
+	public Widget getNoWebGLSupportWidget() {
+		return new Label("Sorry, your browser doesn't seem to support WebGL");
+	}
+
+	void setupLoop () {
 		// setup modules
 		try {			
 			graphics = new GwtGraphics(root, config);			
 		} catch (Throwable e) {
 			root.clear();
-			root.add(new Label("Sorry, your browser doesn't seem to support WebGL"));
+			root.add(getNoWebGLSupportWidget());
 			return;
 		}
 		lastWidth = graphics.getWidth();
 		lastHeight = graphics.getHeight();
 		Gdx.app = this;
-		Gdx.audio = new GwtAudio();
+		
+		if(config.disableAudio) {
+			Gdx.audio = null;
+		} else {
+			Gdx.audio = new GwtAudio();
+		}
 		Gdx.graphics = graphics;
 		Gdx.gl20 = graphics.getGL20();
-		Gdx.gl = graphics.getGLCommon();
+		Gdx.gl = Gdx.gl20;
 		Gdx.files = new GwtFiles(preloader);
 		this.input = new GwtInput(graphics.canvas);
 		Gdx.input = this.input;
-		this.net = new GwtNet();
+		this.net = new GwtNet(config);
 		Gdx.net = this.net;
+		this.clipboard = new GwtClipboard();
+		updateLogLabelSize();
 
 		// tell listener about app creation
 		try {
@@ -176,39 +225,48 @@ public abstract class GwtApplication implements EntryPoint, Application {
 			throw new RuntimeException(t);
 		}
 
-		// setup rendering timer
-		new Timer() {
+		AnimationScheduler.get().requestAnimationFrame(new AnimationCallback() {
 			@Override
-			public void run () {
+			public void execute (double timestamp) {
 				try {
-					graphics.update();
-					if (Gdx.graphics.getWidth() != lastWidth || Gdx.graphics.getHeight() != lastHeight) {
-						GwtApplication.this.listener.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-						lastWidth = graphics.getWidth();
-						lastHeight = graphics.getHeight();
-						Gdx.gl.glViewport(0, 0, lastWidth, lastHeight);
-					}
-					runnablesHelper.addAll(runnables);
-					runnables.clear();
-					for (int i = 0; i < runnablesHelper.size; i++) {
-						runnablesHelper.get(i).run();
-					}
-					runnablesHelper.clear();					
-					listener.render();
-					input.justTouched = false;
+					mainLoop();
 				} catch (Throwable t) {
 					error("GwtApplication", "exception: " + t.getMessage(), t);
 					throw new RuntimeException(t);
 				}
+				AnimationScheduler.get().requestAnimationFrame(this, graphics.canvas);
 			}
-		}.scheduleRepeating((int)((1f / config.fps) * 1000));
+		}, graphics.canvas);
 	}
 
+	void mainLoop() {
+		graphics.update();
+		if (Gdx.graphics.getWidth() != lastWidth || Gdx.graphics.getHeight() != lastHeight) {
+			lastWidth = graphics.getWidth();
+			lastHeight = graphics.getHeight();
+			Gdx.gl.glViewport(0, 0, lastWidth, lastHeight);
+			GwtApplication.this.listener.resize(lastWidth, lastHeight);
+		}
+		runnablesHelper.addAll(runnables);
+		runnables.clear();
+		for (int i = 0; i < runnablesHelper.size; i++) {
+			runnablesHelper.get(i).run();
+		}
+		runnablesHelper.clear();
+		graphics.frameId++;
+		listener.render();
+		input.reset();
+	}
+	
 	public Panel getRootPanel () {
 		return root;
 	}
 
 	long loadStart = TimeUtils.nanoTime();
+
+	public Preloader createPreloader() {
+		return new Preloader(getPreloaderBaseURL());
+	}
 
 	public PreloaderCallback getPreloaderCallback () {
 		final Panel preloaderPanel = new VerticalPanel();
@@ -265,89 +323,64 @@ public abstract class GwtApplication implements EntryPoint, Application {
 		return Gdx.net;
 	}
 
-	private void checkLogLabel () {
-		if (log == null) {
-			log = new TextArea();
-			log.setSize(graphics.getWidth() + "px", "200px");
-			log.setReadOnly(true);
-			root.add(log);
+	private void updateLogLabelSize () {
+		if (log != null) {
+			if (graphics != null) {
+				log.setSize(graphics.getWidth() + "px", "200px");
+			} else {
+				log.setSize("400px", "200px"); // Should not happen at this point, use dummy value
+			}
 		}
 	}
 
 	@Override
 	public void log (String tag, String message) {
-		if (logLevel >= LOG_INFO) {
-			checkLogLabel();
-			log.setText(log.getText() + "\n" + tag + ": " + message);
-			log.setCursorPos(log.getText().length() - 1);
-			System.out.println(tag + ": " + message);
-		}
+		if (logLevel >= LOG_INFO) getApplicationLogger().log(tag, message);
 	}
 
 	@Override
-	public void log (String tag, String message, Exception exception) {
-		if (logLevel >= LOG_INFO) {
-			checkLogLabel();
-			log.setText(log.getText() + "\n" + tag + ": " + message + "\n" + exception.getMessage() + "\n");
-			log.setCursorPos(log.getText().length() - 1);
-			System.out.println(tag + ": " + message + "\n" + exception.getMessage());
-			System.out.println(getStackTrace(exception));
-		}
+	public void log (String tag, String message, Throwable exception) {
+		if (logLevel >= LOG_INFO) getApplicationLogger().log(tag, message, exception);
 	}
 
 	@Override
 	public void error (String tag, String message) {
-		if (logLevel >= LOG_ERROR) {
-			checkLogLabel();
-			log.setText(log.getText() + "\n" + tag + ": " + message);
-			log.setCursorPos(log.getText().length() - 1);
-			System.err.println(tag + ": " + message);
-		}
+		if (logLevel >= LOG_ERROR) getApplicationLogger().error(tag, message);
 	}
 
 	@Override
 	public void error (String tag, String message, Throwable exception) {
-		if (logLevel >= LOG_ERROR) {
-			checkLogLabel();
-			log.setText(log.getText() + "\n" + tag + ": " + message + "\n" + exception.getMessage());
-			log.setCursorPos(log.getText().length() - 1);
-			System.err.println(tag + ": " + message + "\n" + exception.getMessage() + "\n");
-			System.out.println(getStackTrace(exception));
-		}
+		if (logLevel >= LOG_ERROR) getApplicationLogger().error(tag, message, exception);
 	}
 
 	@Override
 	public void debug (String tag, String message) {
-		if (logLevel >= LOG_DEBUG) {
-			checkLogLabel();
-			log.setText(log.getText() + "\n" + tag + ": " + message + "\n");
-			log.setCursorPos(log.getText().length() - 1);
-			System.out.println(tag + ": " + message + "\n");
-		}
+		if (logLevel >= LOG_DEBUG) getApplicationLogger().debug(tag, message);
 	}
 
 	@Override
 	public void debug (String tag, String message, Throwable exception) {
-		if (logLevel >= LOG_DEBUG) {
-			checkLogLabel();
-			log.setText(log.getText() + "\n" + tag + ": " + message + "\n" + exception.getMessage() + "\n");
-			log.setCursorPos(log.getText().length() - 1);
-			System.out.println(tag + ": " + message + "\n" + exception.getMessage());
-			System.out.println(getStackTrace(exception));
-		}
-	}
-
-	private String getStackTrace (Throwable e) {
-		StringBuffer buffer = new StringBuffer();
-		for (StackTraceElement trace : e.getStackTrace()) {
-			buffer.append(trace.toString() + "\n");
-		}
-		return buffer.toString();
+		if (logLevel >= LOG_DEBUG) getApplicationLogger().debug(tag, message, exception);
 	}
 
 	@Override
 	public void setLogLevel (int logLevel) {
 		this.logLevel = logLevel;
+	}
+
+	@Override
+	public int getLogLevel() {
+		return logLevel;
+	}
+
+	@Override
+	public void setApplicationLogger (ApplicationLogger applicationLogger) {
+		this.applicationLogger = applicationLogger;
+	}
+
+	@Override
+	public ApplicationLogger getApplicationLogger () {
+		return applicationLogger;
 	}
 
 	@Override
@@ -381,17 +414,8 @@ public abstract class GwtApplication implements EntryPoint, Application {
 	}
 
 	@Override
-	public Clipboard getClipboard() {
-		return new Clipboard() {
-			@Override
-			public String getContents () {
-				return null;
-			}
-
-			@Override
-			public void setContents (String content) {
-			}			
-		};		
+	public Clipboard getClipboard () {
+		return clipboard;
 	}
 	
 	@Override
@@ -418,7 +442,7 @@ public abstract class GwtApplication implements EntryPoint, Application {
 																			isChrome : userAgent.indexOf("chrome") != -1,
 																			isSafari : userAgent.indexOf("safari") != -1,
 																			isOpera : userAgent.indexOf("opera") != -1,
-																			isIE : userAgent.indexOf("msie") != -1,
+																			isIE : userAgent.indexOf("msie") != -1 || userAgent.indexOf("trident") != -1,
 																			// OS type flags
 																			isMacOS : userAgent.indexOf("mac") != -1,
 																			isLinux : userAgent.indexOf("linux") != -1,
@@ -472,6 +496,18 @@ public abstract class GwtApplication implements EntryPoint, Application {
 		return preloader;
 	}
 	
+	public CanvasElement getCanvasElement(){
+		return graphics.canvas;
+	}
+
+	public LoadingListener getLoadingListener () {
+		return loadingListener;
+	}
+
+	public void setLoadingListener (LoadingListener loadingListener) {
+		this.loadingListener = loadingListener;
+	}
+
 	@Override
 	public void addLifecycleListener (LifecycleListener listener) {
 		synchronized(lifecycleListeners) {
@@ -486,7 +522,57 @@ public abstract class GwtApplication implements EntryPoint, Application {
 		}		
 	}
 	
-	native static void consoleLog(String message) /*-{
+	native static public void consoleLog(String message) /*-{
 		console.log( "GWT: " + message );
 	}-*/;
+	
+	private native void addEventListeners() /*-{
+		var self = this;
+
+		var eventName = null;
+		if ("hidden" in $doc) {
+			eventName = "visibilitychange"
+		} else if ("webkitHidden" in $doc) {
+			eventName = "webkitvisibilitychange"
+		} else if ("mozHidden" in $doc) {
+			eventName = "mozvisibilitychange"
+		} else if ("msHidden" in $doc) {
+			eventName = "msvisibilitychange"
+		}
+
+		if (eventName !== null) {
+			$doc.addEventListener(eventName, function(e) {
+				self.@com.badlogic.gdx.backends.gwt.GwtApplication::onVisibilityChange(Z)($doc['hidden'] !== true);
+			});
+		}
+	}-*/;
+
+	private void onVisibilityChange (boolean visible) {
+		if (visible) {
+			for (LifecycleListener listener : lifecycleListeners) {
+				listener.resume();
+			}
+			listener.resume();
+		} else {
+			for (LifecycleListener listener : lifecycleListeners) {
+				listener.pause();
+			}
+			listener.pause();
+		}
+	}
+	
+	/**
+	 * LoadingListener interface main purpose is to do some things before or after {@link GwtApplication#setupLoop()}
+	 */
+	public interface LoadingListener{
+		/**
+		 * Method called before the setup
+		 */
+		public void beforeSetup();
+		
+		/**
+		 * Method called after the setup
+		 */
+		public void afterSetup();
+	}
 }

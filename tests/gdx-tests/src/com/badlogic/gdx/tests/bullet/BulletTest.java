@@ -33,7 +33,7 @@ public class BulletTest implements ApplicationListener, InputProcessor, GestureL
 	public PerformanceCounter performanceCounter = new PerformanceCounter(this.getClass().getSimpleName());
 	public FloatCounter fpsCounter = new FloatCounter(5);
 	public PerspectiveCamera camera;
-	
+
 	@Override
 	public boolean keyDown (int keycode) {
 		return false;
@@ -124,6 +124,11 @@ public class BulletTest implements ApplicationListener, InputProcessor, GestureL
 	}
 
 	@Override
+	public boolean panStop (float x, float y, int pointer, int button) {
+		return false;
+	}
+
+	@Override
 	public boolean zoom (float initialDistance, float distance) {
 		return false;
 	}
@@ -131,5 +136,9 @@ public class BulletTest implements ApplicationListener, InputProcessor, GestureL
 	@Override
 	public boolean pinch (Vector2 initialPointer1, Vector2 initialPointer2, Vector2 pointer1, Vector2 pointer2) {
 		return false;
+	}
+
+	@Override
+	public void pinchStop () {
 	}
 }

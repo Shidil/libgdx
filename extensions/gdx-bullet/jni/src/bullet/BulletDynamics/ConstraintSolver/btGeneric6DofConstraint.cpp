@@ -776,22 +776,21 @@ int btGeneric6DofConstraint::get_limit_motor_info2(
 	btConstraintInfo2 *info, int row, btVector3& ax1, int rotational,int rotAllowed)
 {
     int srow = row * info->rowskip;
-    int powered = limot->m_enableMotor;
+    bool powered = limot->m_enableMotor;
     int limit = limot->m_currentLimit;
     if (powered || limit)
     {   // if the joint is powered, or has joint limits, add in the extra row
         btScalar *J1 = rotational ? info->m_J1angularAxis : info->m_J1linearAxis;
-        btScalar *J2 = rotational ? info->m_J2angularAxis : 0;
+        btScalar *J2 = rotational ? info->m_J2angularAxis : info->m_J2linearAxis;
         J1[srow+0] = ax1[0];
         J1[srow+1] = ax1[1];
         J1[srow+2] = ax1[2];
-        if(rotational)
-        {
-            J2[srow+0] = -ax1[0];
-            J2[srow+1] = -ax1[1];
-            J2[srow+2] = -ax1[2];
-        }
-        if((!rotational))
+
+        J2[srow+0] = -ax1[0];
+        J2[srow+1] = -ax1[1];
+        J2[srow+2] = -ax1[2];
+
+		if((!rotational))
         {
 			if (m_useOffsetForConstraintFrame)
 			{
@@ -841,7 +840,7 @@ int btGeneric6DofConstraint::get_limit_motor_info2(
         }
         // if we're limited low and high simultaneously, the joint motor is
         // ineffective
-        if (limit && (limot->m_loLimit == limot->m_hiLimit)) powered = 0;
+        if (limit && (limot->m_loLimit == limot->m_hiLimit)) powered = false;
         info->m_constraintError[srow] = btScalar(0.f);
         if (powered)
         {
